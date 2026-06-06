@@ -1,0 +1,17 @@
+# Python deps for the virtual Reachy Mini control loop.
+# Python deps for the loop. NOTE: inside the lerobot-gpu container these alone
+# are NOT enough - reachy-mini needs system libs (GL/X, gstreamer) and a
+# pkg-config fix for pygobject on Ubuntu 24.04. Use the full recipe instead:
+#   docker exec -u root reachy-sim bash /workspace/scripts/container_setup.sh
+# (the lerobot-gpu image ships uv, not pip; container_setup.sh handles everything)
+#
+# Notes:
+# - reachy-mini[mujoco] pulls in the ReachyMini SDK + MuJoCo sim + the
+#   reachy-mini-motor-controller (low-level Rust binding) used for expressions.
+# - opencv-python-headless avoids Qt/X conflicts inside the container; the
+#   MuJoCo viewer handles the on-screen window, OpenCV is only used to encode
+#   camera frames to JPEG.
+reachy-mini[mujoco]>=1.7.0
+ollama>=0.4.0
+opencv-python-headless>=4.9.0
+numpy>=2.2.5

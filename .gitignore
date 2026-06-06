@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------
+# Large / generated artifacts (do NOT sync these)
+# ---------------------------------------------------------------------------
+
+# Synthesized TTS audio (written to tts_out/, bind-mounted from the container)
+tts_out/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.aac
+*.m4a
+
+# Captured / drop-folder camera frames and other media
+python_control/frames/
+frames/
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Model weights & ML checkpoints (Ollama/HF models, GGUF, etc.)
+*.gguf
+*.ggml
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.h5
+*.pb
+*.tflite
+*.npz
+models/
+checkpoints/
+weights/
+*.mujoco_cache/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+
+# Test / coverage / type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Logs & temp
+# ---------------------------------------------------------------------------
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# ---------------------------------------------------------------------------
+# Editor / OS cruft
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Cursor edit-conflict artifacts
+*Edit conflict*

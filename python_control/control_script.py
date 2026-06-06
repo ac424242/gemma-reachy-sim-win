@@ -82,6 +82,18 @@ TTS_RATE = int(os.environ.get("TTS_RATE", "175"))  # words/min
 TTS_VOICE = os.environ.get("TTS_VOICE", "en+f3")  # espeak-ng voice (cartoon pixie)
 TTS_PITCH = int(os.environ.get("TTS_PITCH", "88"))  # 0-99, higher = squeakier
 TTS_GAP = int(os.environ.get("TTS_GAP", "4"))  # pause between words (10ms units)
+# Speech-to-text: read each chat turn from a transcript dropped by a host-side
+# mic listener. The container has no microphone (same reason TTS writes WAVs out
+# for a host player), so scripts/listen.ps1 captures + transcribes the mic on
+# Windows and writes <timestamp>.txt into STT_DIR (a bind-mounted folder). "1"
+# to enable; only meaningful in chat mode.
+STT_ENABLED = os.environ.get("STT", "0").lower() in ("1", "true", "yes", "on")
+STT_DIR = os.environ.get("STT_DIR", "/workspace/stt_in")
+STT_POLL_SEC = float(os.environ.get("STT_POLL_SEC", "0.25"))
+# Reply sink for the browser voice container: when set, each chat reply is also
+# written as <timestamp>.txt into this folder so voice/server.py can Piper-TTS it
+# back to the browser. Leave empty for host-side TTS (tts_out/) only.
+REPLY_DIR = os.environ.get("REPLY_DIR", "").strip()
 
 # Strict structured-output schema. Ollama uses this to constrain Gemma's output
 # so message.content is guaranteed-parseable JSON with exactly these fields.
@@ -245,6 +257,63 @@ def speak(text: str) -> None:
         os.replace(tmp, final)
     except Exception as exc:  # pragma: no cover - audio is best-effort
         logger.warning("TTS failed: %s", exc)
+
+
+def reply_sink(text: str) -> None:
+    """Drop the chat reply into REPLY_DIR for the voice container to speak.
+
+    No-op unless REPLY_DIR is set. Uses the same atomic .part -> rename pattern
+    as speak() and listen_text() so the voice server never reads a half-written
+    file.
+    """
+    if not REPLY_DIR or not text.strip():
+        return
+    try:
+        os.makedirs(REPLY_DIR, exist_ok=True)
+        final = os.path.join(REPLY_DIR, f"{int(time.time() * 1000)}.txt")
+        tmp = final + ".part"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, final)
+    except OSError as exc:
+        logger.warning("Reply sink failed (%s): %s", REPLY_DIR, exc)
+
+
+def listen_text(life: "GracefulExit") -> Optional[str]:
+    """Block until the host listener drops a transcript in STT_DIR; return it.
+
+    The input mirror of speak(): the container has no microphone, so
+    scripts/listen.ps1 captures + transcribes the mic on Windows and writes a
+    <timestamp>.txt here (atomically, via a .part rename), and we consume the
+    oldest one. Returns the recognized text, or None if we were asked to shut
+    down while waiting (so Ctrl+C stays responsive).
+    """
+    os.makedirs(STT_DIR, exist_ok=True)
+    while not life.stop:
+        try:
+            files = sorted(
+                f for f in os.listdir(STT_DIR)
+                if f.endswith(".txt") and not f.endswith(".part")
+            )
+        except OSError as exc:
+            logger.warning("STT dir read failed (%s): %s", STT_DIR, exc)
+            files = []
+        if files:
+            path = os.path.join(STT_DIR, files[0])
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    text = fh.read().strip()
+            except OSError as exc:
+                logger.warning("Could not read transcript %s: %s", path, exc)
+                text = ""
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return text
+        time.sleep(STT_POLL_SEC)
+    return None
 
 
 _IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
@@ -469,20 +538,33 @@ def chat_loop(mini: Optional[object]) -> None:
     client = ollama.Client(host=OLLAMA_HOST)
     wheels = WheelController(reachy=mini)
     camera = FrameSource(CAMERA_SOURCE, mini) if CHAT_USE_CAMERA else None
+    life = GracefulExit()
 
     logger.info("Ollama host: %s | model: %s", OLLAMA_HOST, GEMMA_MODEL)
-    print("\nChat with the robot. Type your message and press Enter.")
-    print("Commands: 'quit' or 'exit' to stop, Ctrl+C anytime.\n")
+    if STT_ENABLED:
+        print("\nVoice chat: speak when the host listener prompts you.")
+        print(f"Waiting for transcripts in {STT_DIR}. Ctrl+C to stop.\n")
+    else:
+        print("\nChat with the robot. Type your message and press Enter.")
+        print("Commands: 'quit' or 'exit' to stop, Ctrl+C anytime.\n")
 
     history: list = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     counter = 0
     try:
-        while True:
-            try:
-                text = input("you> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                break
+        while not life.stop:
+            if STT_ENABLED:
+                text = listen_text(life)
+                if text is None:  # shutting down
+                    break
+                text = text.strip()
+                if text:
+                    print(f"you> {text}")
+            else:
+                try:
+                    text = input("you> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
             if not text:
                 continue
             if text.lower() in ("quit", "exit"):
@@ -502,6 +584,7 @@ def chat_loop(mini: Optional[object]) -> None:
 
             reply = action.get("reply", "")
             print(f"robot> {reply}  [{action['expression']} / {action['movement']}]")
+            reply_sink(reply)
             speak(reply)
             apply_expression(mini, action["expression"])
             wheels.execute(action["movement"])

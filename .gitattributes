@@ -1,0 +1,30 @@
+# Normalize line endings across Windows (host) and Linux (Docker) environments.
+* text=auto
+
+# Python and shell scripts run in Linux containers — keep LF.
+*.py text eol=lf
+*.sh text eol=lf
+
+# Windows-native scripts — CRLF on checkout.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Config, markup, and docs — LF for cross-platform consistency.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+Dockerfile text eol=lf
+
+# Binary assets
+*.crt binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.mp4 binary

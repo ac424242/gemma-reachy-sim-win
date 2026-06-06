@@ -26,6 +26,32 @@ services:
     volumes:
       - open-webui_data:/app/backend/data
 
+  voice:
+    build:
+      context: .
+      dockerfile: voice/Dockerfile
+    container_name: voice
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./stt_in:/data/stt_in
+      - ./replies:/data/replies
+    environment:
+      - WHISPER_MODEL=base
+      - WHISPER_DEVICE=cpu
+      - STT_DIR=/data/stt_in
+      - REPLY_DIR=/data/replies
+      - PIPER_VOICE=en_US-amy-medium
+      - REPLY_TIMEOUT_SEC=30
+    # Optional GPU for faster-whisper (may OOM alongside gemma3:4b on 8 GB):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
 volumes:
   ollama_data:
   open-webui_data:

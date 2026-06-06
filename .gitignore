@@ -4,6 +4,9 @@
 
 # Synthesized TTS audio (written to tts_out/, bind-mounted from the container)
 tts_out/
+# Voice-bridge transcripts + replies (stt_in/ and replies/ shared folders)
+stt_in/
+replies/
 *.wav
 *.mp3
 *.flac
@@ -88,3 +91,8 @@ desktop.ini
 
 # Cursor edit-conflict artifacts
 *Edit conflict*
+
+# ---------------------------------------------------------------------------
+# Certificates / secrets
+# ---------------------------------------------------------------------------
+norton_root.crt

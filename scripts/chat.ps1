@@ -14,6 +14,12 @@
 .PARAMETER NoVoice
   Skip audio entirely (text-only chat).
 
+.PARAMETER Voice
+  Talk to the robot with your voice instead of typing (STT=1). Opens a
+  push-to-talk listener window (scripts\listen.ps1) that captures your mic and
+  feeds the transcript to the robot. Requires faster-whisper + sounddevice on
+  Windows: pip install faster-whisper sounddevice numpy
+
 .PARAMETER Camera
   Also send the current camera frame each turn (CHAT_USE_CAMERA=1).
 
@@ -30,12 +36,14 @@
 #>
 param(
     [switch]$NoVoice,
+    [switch]$Voice,
     [switch]$Camera,
     [string]$CameraSource
 )
 
 $repo = Split-Path $PSScriptRoot -Parent
 $ttsDir = Join-Path $repo "tts_out"
+$sttDir = Join-Path $repo "stt_in"
 
 $player = $null
 if (-not $NoVoice) {
@@ -47,8 +55,21 @@ if (-not $NoVoice) {
     )
 }
 
+# The push-to-talk listener needs its own visible window (you press Enter there
+# to start/stop each recording), unlike the fire-and-forget player.
+$listener = $null
+if ($Voice) {
+    New-Item -ItemType Directory -Force -Path $sttDir | Out-Null
+    Get-ChildItem "$sttDir\*.txt" -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+    Write-Host "Starting voice listener (push-to-talk window)..."
+    $listener = Start-Process powershell -PassThru -ArgumentList @(
+        "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "listen.ps1")
+    )
+}
+
 $envs = "INPUT_MODE=chat"
 if (-not $NoVoice) { $envs += " TTS=1" }
+if ($Voice) { $envs += " STT=1" }
 if ($Camera -or $CameraSource) { $envs += " CHAT_USE_CAMERA=1" }
 if ($CameraSource) { $envs += " CAMERA_SOURCE=$CameraSource" }
 
@@ -60,5 +81,9 @@ finally {
     if ($player -and -not $player.HasExited) {
         Write-Host "`nStopping voice player..."
         Stop-Process -Id $player.Id -ErrorAction SilentlyContinue
+    }
+    if ($listener -and -not $listener.HasExited) {
+        Write-Host "Stopping voice listener..."
+        Stop-Process -Id $listener.Id -ErrorAction SilentlyContinue
     }
 }

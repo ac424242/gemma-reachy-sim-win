@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reachy Voice</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, sans-serif;
+      --user-bg: #e3f2fd;
+      --user-fg: #0d47a1;
+      --robot-bg: #f3e5f5;
+      --robot-fg: #4a148c;
+      --border: #ccc;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --user-bg: #1e3a5f;
+        --user-fg: #bbdefb;
+        --robot-bg: #3e2749;
+        --robot-fg: #e1bee7;
+        --border: #555;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      max-width: 40rem;
+      margin: 0 auto;
+      padding: 1rem;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header { margin-bottom: 0.5rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+    p.hint { color: #666; font-size: 0.9rem; margin: 0; }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin: 0.75rem 0 0.5rem;
+    }
+    .toolbar button.secondary {
+      font-size: 0.85rem;
+      padding: 0.35rem 0.75rem;
+      width: auto;
+      margin: 0;
+    }
+
+    #transcript {
+      flex: 1;
+      min-height: 14rem;
+      max-height: 55vh;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 0.6rem;
+      padding: 0.75rem;
+      background: rgba(128, 128, 128, 0.06);
+    }
+    #transcript:empty::before {
+      content: "Conversation will appear here…";
+      opacity: 0.55;
+      font-style: italic;
+    }
+
+    .turn { margin-bottom: 0.85rem; }
+    .turn:last-child { margin-bottom: 0; }
+    .bubble {
+      border-radius: 0.65rem;
+      padding: 0.55rem 0.75rem;
+      margin: 0.25rem 0;
+      max-width: 92%;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble.user {
+      background: var(--user-bg);
+      color: var(--user-fg);
+      margin-left: auto;
+      border-bottom-right-radius: 0.15rem;
+    }
+    .bubble.robot {
+      background: var(--robot-bg);
+      color: var(--robot-fg);
+      margin-right: auto;
+      border-bottom-left-radius: 0.15rem;
+    }
+    .speaker {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      opacity: 0.7;
+      margin-bottom: 0.15rem;
+    }
+    .turn .speaker.user-label { text-align: right; }
+    .time {
+      font-size: 0.7rem;
+      opacity: 0.55;
+      margin-top: 0.15rem;
+    }
+
+    .controls { margin-top: 0.75rem; }
+    button#ptt {
+      font-size: 1.1rem;
+      padding: 0.9rem 1.4rem;
+      border-radius: 0.6rem;
+      border: 1px solid #888;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.recording { background: #c62828; color: #fff; border-color: #b71c1c; }
+    #status { font-size: 0.9rem; min-height: 1.2rem; margin-top: 0.35rem; }
+    .error { color: #c62828; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Talk to Reachy</h1>
+    <p class="hint">Hold the button, speak, release. The robot answers aloud and moves in the sim.</p>
+  </header>
+
+  <div class="toolbar">
+    <span class="label" style="font-size:0.8rem; opacity:0.7; text-transform:uppercase; letter-spacing:0.05em;">Conversation</span>
+    <button type="button" class="secondary" id="clear" title="Clear transcript">Clear</button>
+  </div>
+  <div id="transcript" aria-live="polite" aria-label="Conversation transcript"></div>
+
+  <div class="controls">
+    <button id="ptt" type="button">Hold to talk</button>
+    <div id="status"></div>
+  </div>
+
+  <audio id="player" hidden></audio>
+
+  <script>
+    const ptt = document.getElementById("ptt");
+    const clearBtn = document.getElementById("clear");
+    const statusEl = document.getElementById("status");
+    const transcriptEl = document.getElementById("transcript");
+    const player = document.getElementById("player");
+    const STORAGE_KEY = "reachy-voice-transcript";
+
+    let mediaStream = null;
+    let recorder = null;
+    let chunks = [];
+    let busy = false;
+    let history = [];
+
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isError ? "error" : "";
+    }
+
+    function formatTime(date = new Date()) {
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+
+    function saveHistory() {
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      } catch (_) { /* quota or private mode */ }
+    }
+
+    function loadHistory() {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) history = parsed;
+      } catch (_) {
+        history = [];
+      }
+    }
+
+    function renderTranscript() {
+      transcriptEl.innerHTML = "";
+      for (const turn of history) {
+        const wrap = document.createElement("div");
+        wrap.className = "turn";
+
+        const userLabel = document.createElement("div");
+        userLabel.className = "speaker user-label";
+        userLabel.textContent = "You";
+        wrap.appendChild(userLabel);
+
+        const userBubble = document.createElement("div");
+        userBubble.className = "bubble user";
+        userBubble.textContent = turn.user;
+        wrap.appendChild(userBubble);
+
+        const robotLabel = document.createElement("div");
+        robotLabel.className = "speaker";
+        robotLabel.textContent = "Reachy";
+        wrap.appendChild(robotLabel);
+
+        const robotBubble = document.createElement("div");
+        robotBubble.className = "bubble robot";
+        robotBubble.textContent = turn.robot;
+        wrap.appendChild(robotBubble);
+
+        if (turn.time) {
+          const timeEl = document.createElement("div");
+          timeEl.className = "time";
+          timeEl.textContent = turn.time;
+          wrap.appendChild(timeEl);
+        }
+
+        transcriptEl.appendChild(wrap);
+      }
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+
+    function addTurn(userText, robotText) {
+      history.push({
+        user: userText,
+        robot: robotText,
+        time: formatTime(),
+      });
+      saveHistory();
+      renderTranscript();
+    }
+
+    function clearTranscript() {
+      history = [];
+      saveHistory();
+      renderTranscript();
+      setStatus("Transcript cleared.");
+    }
+
+    async function ensureMic() {
+      if (mediaStream) return mediaStream;
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      return mediaStream;
+    }
+
+    function startRecording() {
+      if (busy || recorder?.state === "recording") return;
+      chunks = [];
+      recorder = new MediaRecorder(mediaStream, { mimeType: "audio/webm" });
+      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      recorder.start();
+      ptt.classList.add("recording");
+      ptt.textContent = "Recording… release to send";
+      setStatus("Listening…");
+    }
+
+    async function stopAndSend() {
+      if (!recorder || recorder.state !== "recording" || busy) return;
+      busy = true;
+      ptt.disabled = true;
+      ptt.classList.remove("recording");
+      ptt.textContent = "Hold to talk";
+      setStatus("Processing…");
+
+      const blob = await new Promise((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: "audio/webm" }));
+        recorder.stop();
+      });
+
+      try {
+        const form = new FormData();
+        form.append("audio", blob, "speech.webm");
+        const res = await fetch("/turn", { method: "POST", body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || `Request failed (${res.status})`);
+        }
+        const userText = data.transcript || "(no speech recognized)";
+        const robotText = data.reply || "(no reply)";
+        addTurn(userText, robotText);
+        if (data.audio) {
+          player.src = `data:${data.audio_mime || "audio/wav"};base64,${data.audio}`;
+          await player.play();
+        }
+        setStatus("Ready.");
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      } finally {
+        busy = false;
+        ptt.disabled = false;
+      }
+    }
+
+    async function init() {
+      loadHistory();
+      renderTranscript();
+      clearBtn.addEventListener("click", clearTranscript);
+      try {
+        await ensureMic();
+        setStatus("Mic ready. Hold the button to talk.");
+      } catch (err) {
+        setStatus("Microphone access denied or unavailable.", true);
+        ptt.disabled = true;
+      }
+    }
+
+    ptt.addEventListener("mousedown", startRecording);
+    ptt.addEventListener("mouseup", stopAndSend);
+    ptt.addEventListener("mouseleave", stopAndSend);
+    ptt.addEventListener("touchstart", (e) => { e.preventDefault(); startRecording(); });
+    ptt.addEventListener("touchend", (e) => { e.preventDefault(); stopAndSend(); });
+
+    init();
+  </script>
+</body>
+</html>

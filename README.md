@@ -21,6 +21,33 @@ camera frame -> Gemma 3 (Ollama) -> {expression, movement}
 - Inside the container, reach Ollama at `host.docker.internal:11434` (not
   `localhost`).
 
+## One-click start (Windows)
+
+Double-click **`StartReachy.bat`** at the repo root (or run the script below).
+It attempts to start everything: Docker Desktop, VcXsrv, Ollama + `gemma3:4b`,
+the `reachy-sim` container (first-run setup included), the MuJoCo sim window
+(brought to the front), and the chat control loop (`STT=1`, Piper replies in
+the browser). When startup finishes it **prompts you** to open the voice page
+at **http://localhost:7860** (you can confirm to launch the browser or open it
+yourself).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start_robot.ps1
+```
+
+With a phone camera each chat turn:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start_robot.ps1 `
+  -CameraSource http://192.168.4.159:8080/shot.jpg
+```
+
+Stop everything with **`StopReachy.bat`** or `scripts\stop_robot.ps1`. Pin
+`StartReachy.bat` to the desktop or taskbar for a permanent launcher.
+
+Prerequisites still apply (Docker Desktop, VcXsrv, NVIDIA GPU, images pulled).
+First run can take several minutes (Reachy stack install + voice image build).
+
 ## Prerequisites
 
 - Windows with an NVIDIA GPU (validated on RTX 5070 Laptop, 8 GB).
@@ -106,6 +133,10 @@ wheel commands print in the loop log. Stop with `Ctrl+C`.
 | `TTS_PITCH` | `88` | espeak-ng pitch 0-99; higher = squeakier/more cartoonish |
 | `TTS_RATE` | `175` | speech rate in words/min |
 | `TTS_GAP` | `4` | pause between words (10ms units) for a clipped cartoon rhythm |
+| `STT` | `0` | `1` to take chat turns from your voice instead of typing (chat mode; see "Talk to it with your voice") |
+| `STT_DIR` | `/workspace/stt_in` | folder watched for mic transcripts (bind-mounted to `stt_in/`) |
+| `STT_POLL_SEC` | `0.25` | how often (seconds) the loop checks for a new transcript |
+| `REPLY_DIR` | *(empty)* | when set (e.g. `/workspace/replies`), write each chat reply here for the voice container to Piper-TTS back to the browser |
 
 ### Using a real camera (CAMERA_SOURCE)
 
@@ -235,17 +266,113 @@ The voice is a cartoonish pixie by default. Tune it with `TTS_VOICE` (e.g.
 `en+f5` chipmunk, `en+m7` goofy), `TTS_PITCH` (0-99, higher = squeakier), and
 `TTS_RATE` (words/min). `espeak-ng` is installed by `container_setup.sh`.
 
+### Talk to it with your voice (speech-to-text)
+
+You can speak your chat turns instead of typing them. Just like the container
+has **no sound card** (so TTS writes WAVs for a host player), it has **no
+microphone** - so the mic is captured on Windows and the transcript is handed to
+the container through the bind-mounted `stt_in/` folder, the exact input mirror
+of `tts_out/`. The robot's brain is unchanged; only the source of your message
+text changes from the keyboard to your voice.
+
+Transcription runs on Windows with `faster-whisper` (GPU-accelerated on your
+RTX 5070). Install the host deps once:
+
+```powershell
+pip install faster-whisper sounddevice numpy
+```
+
+#### Easiest: one command (voice in, voice out)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\chat.ps1 -Voice
+```
+
+This opens a push-to-talk **listener window** alongside the chat: press Enter
+there, speak, press Enter again, and the robot answers out loud. Combine with
+`-CameraSource` to also send a live frame each turn. (`-Voice` is separate from
+`-NoVoice`, which controls whether the robot *speaks back*.)
+
+#### Manual: separate windows
+
+The listener is the input twin of `play_tts.ps1`. In its own PowerShell window:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\listen.ps1
+```
+
+Then start chat with `STT=1` so the loop reads transcripts instead of stdin:
+
+```powershell
+docker exec -it -u root reachy-sim bash -lc "cd /workspace/python_control && INPUT_MODE=chat STT=1 TTS=1 python control_script.py"
+```
+
+It's push-to-talk by design (press Enter to start/stop each recording) so it
+won't transcribe the robot's own spoken replies or background noise. Tune the
+model size with `listen.ps1 -Model` (`tiny`/`base`/`small`/`medium`/`large-v3`;
+default `small`).
+
+### Browser voice (containerized — no host Python)
+
+A dedicated **voice** container handles mic capture and speech playback through
+your browser. The container has no microphone or speakers (same as
+`reachy-sim`), so the browser is the audio endpoint: it records with
+`getUserMedia`, posts audio to the voice service, and plays the Piper reply.
+Transcripts and answers cross to the robot through shared `stt_in/` and
+`replies/` folders — no `listen.ps1`, `play_tts.ps1`, or host Python needed.
+
+```mermaid
+flowchart LR
+    browser[Browser mic + speaker] --> voice[voice container]
+    voice --> stt[stt_in]
+    stt --> loop[control_script chat STT=1]
+    loop --> rep[replies]
+    rep --> voice
+    loop --> gemma[Gemma + sim]
+```
+
+1. Build and start the voice service (from the repo root):
+
+```powershell
+docker compose up -d --build voice
+```
+
+2. Start the chat loop in `reachy-sim` (sim daemon must already be running):
+
+```powershell
+docker exec -it -u root reachy-sim bash -lc "cd /workspace/python_control && \
+  INPUT_MODE=chat STT=1 TTS=0 STT_DIR=/workspace/stt_in REPLY_DIR=/workspace/replies \
+  python control_script.py"
+```
+
+(`TTS=0` keeps espeak silent; Piper in the browser speaks instead. Add
+`CHAT_USE_CAMERA=1` and `CAMERA_SOURCE=…` to also send a live frame each turn.)
+
+3. Open **http://localhost:7860**, allow the microphone, hold **Hold to talk**,
+speak, release. The robot answers in the page and reacts in MuJoCo.
+
+The host-side `listen.ps1` / `chat.ps1 -Voice` path still works; pick one STT
+source per session (don't run both listeners at once).
+
 ## Files
 
 | Path | Purpose |
 |---|---|
-| `docker-compose.yml` | Ollama + Open WebUI (GPU) |
+| `docker-compose.yml` | Ollama + Open WebUI (GPU) + voice (browser STT/TTS) |
+| `voice/server.py` | browser voice bridge: Whisper STT + Piper TTS + file handoff |
+| `voice/static/index.html` | push-to-talk web UI (mic capture + playback) |
 | `python_control/control_script.py` | main loop: camera/chat -> Gemma -> dispatch (+TTS) |
 | `scripts/chat.ps1` | one-command chat with voice (auto-starts the player) |
 | `scripts/play_tts.ps1` | Windows watcher that plays the robot's spoken replies |
+| `scripts/listen.ps1` | Windows push-to-talk mic listener (writes transcripts to `stt_in/`) |
+| `scripts/transcribe.py` | host helper: records the mic and transcribes it with faster-whisper |
 | `python_control/expressions.py` | expression -> head/antenna keyframes |
 | `python_control/wheel_controller.py` | simulated wheel motor for `movement` |
-| `scripts/run_container.ps1` | launch the container with X + GPU |
+| `StartReachy.bat` | double-click launcher: full stack + browser voice UI |
+| `StopReachy.bat` | double-click launcher: tear down reachy-sim + compose |
+| `scripts/start_robot.ps1` | one-click startup orchestrator (used by StartReachy.bat) |
+| `scripts/stop_robot.ps1` | stop in-container processes, remove reachy-sim, compose down |
+| `scripts/run_container.ps1` | launch the container with X + GPU (interactive shell) |
 | `scripts/container_setup.sh` | one-time in-container dependency install |
 | `scripts/verify_prereqs.py` | check Ollama/vision/JSON/image/Python |
 | `scripts/mujoco_xtest.py` | minimal MuJoCo viewer X-forwarding test |

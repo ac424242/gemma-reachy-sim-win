@@ -28,8 +28,10 @@ It attempts to start everything: Docker Desktop, VcXsrv, Ollama + `gemma3:4b`,
 the `reachy-sim` container (first-run setup included), the MuJoCo sim window
 (brought to the front), and the chat control loop (`STT=1`, Piper replies in
 the browser). When startup finishes it **prompts you** to open the voice page
-at **http://localhost:7860** (you can confirm to launch the browser or open it
+at **[http://localhost:7860](http://localhost:7860)** (you can confirm to launch the browser or open it
 yourself).
+
+![Talk to Reachy — browser voice chat with MuJoCo sim](screenshot.png)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start_robot.ps1
@@ -348,7 +350,7 @@ docker exec -it -u root reachy-sim bash -lc "cd /workspace/python_control && \
 (`TTS=0` keeps espeak silent; Piper in the browser speaks instead. Add
 `CHAT_USE_CAMERA=1` and `CAMERA_SOURCE=…` to also send a live frame each turn.)
 
-3. Open **http://localhost:7860**, allow the microphone, hold **Hold to talk**,
+3. Open **[http://localhost:7860](http://localhost:7860)**, allow the microphone, hold **Hold to talk**,
 speak, release. The robot answers in the page and reacts in MuJoCo.
 
 The host-side `listen.ps1` / `chat.ps1 -Voice` path still works; pick one STT
